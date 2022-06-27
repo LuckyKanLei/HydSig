@@ -26,7 +26,7 @@ sig_Mean <- function(Data, t_scale = apply.monthly){
 #' rslt <- sig_Quantile(xts_Q)
 #' rslt <- sig_Quantile(xts_Q, tile = c(10, 50, 90))
 #' @export
-sig_Quantile <- function(Data, tile = c(5, 95)){
+sig_Quantile <- function(Data, tile = 95){
   if(any(tile < 0 | tile > 100)) errorCondition("Please give the tile between 0 and 100.")
   if(any(is.na(Data))) message("The NA in \'Data\' will be droped, if nessary please deal with the NAs.")
   tile <- tile / 100.
@@ -57,7 +57,6 @@ sig_Quantile <- function(Data, tile = c(5, 95)){
 #' @param Preciptation [xts / array]-2D(time, space) Time serious Preciptation in difficult location.
 #' @return [array]-2D(1, space) The Runoff ratio. Or [xts]-2D(sum_time, space) for other scale with apply.XXXly.
 #' @examples rslt <- sig_Runoff_ratio(xts_Q, xts_P)
-#' rslt <- xts::apply.yearly(cbind(Q = xts_Q, P = xts_P), function(QP) sig_Runoff_ratio(QP[, grep("Q", colnames(QP))], QP[, grep("P", colnames(QP))]))
 #' @export
 sig_Runoff_ratio <- function(Streamflow, Preciptation){
   dim_Q <- dim(Streamflow)
@@ -67,86 +66,6 @@ sig_Runoff_ratio <- function(Streamflow, Preciptation){
   return(colSums(Streamflow, na.rm = TRUE) / colSums(Preciptation, na.rm = TRUE))
 }
 
-#' @title Base flow
-#' @description Base flow with digital filter method.
-#' @references
-#' [Arnold.1995]
-#' [eq. 1-2]
-#' @param Streamflow [xts]-2D(time, space) Time serious Streamflow in difficult location.
-#' @param param_filter [num]-range() Filter parameter that enables the shape of the separation to be altered.
-#' @return baseflow [xts]-2D(time, space) Time serious baseflow in difficult location.
-#' @examples
-#' rslt <- base_Flow.DFM_matrix(xts_Q)
-#' @export
-base_Flow.DFM_matrix <- function(Streamflow, param_filter = 0.925){
-  dim_Q <- dim(Streamflow)
-  time_N <- dim_Q[1]
-  mat_filter <- matrix(param_filter^(rep(1:time_N,time_N) - rep(1:time_N, each=time_N)), time_N)
-  mat_filter[upper.tri(mat_filter)] <- 0
-  if(any(is.na(Streamflow))) {
-    message("The Null (NA) values in Streamflow will replace by 0, if nessary please deal with the NAs. And the results in the same place will in NA seted.")
-    Streamflow0 <- replace(Streamflow, is.na(Streamflow), 0)
-    Q_diff <- diff(Streamflow0) * (1 + param_filter) * 0.5
-    Q_direct <- apply(Q_diff, 2, function(Q_) mat_filter %*% Q_)
-    return((Streamflow - Q_direct)[-1, ])
-  }
-  Q_diff <- rbind(0, diff(as.matrix(Streamflow)) * (1 + param_filter) * 0.5)
-  Q_direct <- apply(Q_diff, 2, function(Q_) mat_filter %*% Q_)
-  return((Streamflow - Q_direct)[-1, ])
-}
-
-#' @title Base flow
-#' @inheritParams base_Flow.DFM_matrix
-#' @param passes_N [integer] The number of pass, see [Arnold.1995].
-#' @param negativ_step [logi] TRUE | FALSE for with or without inveser order, see [Arnold.1995].
-#' @importFrom xts as.xts
-#' @examples
-#' rslt <- base_Flow.DFM(xts_Q)
-#' rslt <- base_Flow.DFM(xts_Q, passes_N = 3, negativ_step = FALSE)
-#' @export
-base_Flow.DFM <- function(Streamflow, param_filter = 0.925, passes_N = 1, negativ_step = TRUE){
-  ## deal with NAs
-  if(any(is.na(Streamflow))) interpolat_NA_time(Streamflow)
-  dim_Q <- dim(Streamflow)
-  time_N <- dim_Q[1]
-  Q_diff <- as.matrix(diff(Streamflow) * (1 + param_filter) * 0.5)
-  Q_direct <- (Q_diff)
-  Q_direct[1, ] <- Streamflow[1, ] - apply(Streamflow, 2, min)
-  if(negativ_step) {
-    for (i in 2:(time_N)) {
-      Q_direct[i, ] <- maxSVector(0, param_filter * Q_direct[i-1, ] + Q_diff[i, ])
-    }
-
-  } else {
-    for (i in 2:(time_N)) {
-      Q_direct[i, ] <- param_filter * Q_direct[i-1, ] + Q_diff[i, ]
-    }
-    Q_direct <- maxSVector(0, Q_direct)
-  }
-  Q_base <- Streamflow - Q_direct
-  if(passes_N > 1) for (i in 2:passes_N) {Q_base <- fct_filter.DFM(as.xts(rev(as.xts(Q_base))), param_filter, negativ_step)}
-  return(Q_base)
-}
-
-fct_filter.DFM <- function(Streamflow, param_filter = 0.925, negativ_step = TRUE){
-  dim_Q <- dim(Streamflow)
-  time_N <- dim_Q[1]
-  Q_diff <- as.matrix(diff(Streamflow) * (1 + param_filter) * 0.5)
-  Q_direct <- (Q_diff)
-  Q_direct[1, ] <- Streamflow[1, ] - apply(Streamflow, 2, min)
-  if(negativ_step) {
-    for (i in 2:(time_N)) {
-      Q_direct[i, ] <- maxSVector(0, param_filter * Q_direct[i-1, ] + Q_diff[i, ])
-    }
-
-  } else {
-    for (i in 2:(time_N)) {
-      Q_direct[i, ] <- param_filter * Q_direct[i-1, ] + Q_diff[i, ]
-    }
-    Q_direct <- maxSVector(0, Q_direct)
-  }
-  return((Streamflow - Q_direct))
-}
 
 #' @title Baseflow index
 #' @inheritParams base_Flow.DFM
@@ -157,9 +76,16 @@ fct_filter.DFM <- function(Streamflow, param_filter = 0.925, negativ_step = TRUE
 #' sig_Baseflow_index.DFM(xts_Q)
 #' @export
 sig_Baseflow_index.DFM <- function(Streamflow, param_filter = 0.925, passes_N = 1, negativ_step = TRUE, t_scale = apply.yearly){
+  if(any(is.na(Streamflow))) message("The NA in Streamflow will be replace with 0, if nessary please deal with the NAs.")
+  Streamflow[,] <- tidyr::replace_na(as.numeric(Streamflow[,]), 0)
   Q_base <- base_Flow.DFM(Streamflow, param_filter, passes_N, negativ_step)
   if(is.null(t_scale)) mat_rate <- colSums(Q_base, na.rm = TRUE) / colSums(Streamflow, na.rm = TRUE)
-  else mat_rate <- t_scale(cbind(B = Q_base, Q = Streamflow), function(BQ) colSums(BQ[grep("B", colnames(BQ)), ], na.rm = TRUE) / colSums(BQ[grep("Q", colnames(BQ)), ], na.rm = TRUE))
+  else {
+    BQ <- cbind(B = Q_base, Q = Streamflow)
+    n_gauge <- dim(BQ)[2] / 2
+    mat_temp <- t_scale(BQ, colMeans, na.rm = TRUE)
+    mat_rate <- mat_temp[,1:n_gauge] / mat_temp[, (n_gauge + 1):(n_gauge * 2)]
+  }
   return(mat_rate)
 }
 
@@ -169,28 +95,29 @@ sig_Baseflow_index.DFM <- function(Streamflow, param_filter = 0.925, passes_N = 
 #' @param Preciptation [xts]-2D(time, space) Time serious Preciptation in difficult location.
 #' @param t_scale [function] |apply.quarterly| for quarterly, |apply.yearly| for yearly.
 #' @param wateryear_start_m [num]-|2|3|4|5|6|7|8|9|10|11|12| for Feb. ... Dec.
+#' @param fct_stat [function] statistic function like mean, media, max and so on
 #' @return stream elasticity [xts]-2D(time, space) in time scale
 #' @examples rslt <- sig_Stream_elas.Sawicz(xts_Q, xts_P)
 #' rslt <- median(sig_Stream_elas.Sawicz(xts_Q, xts_P, wateryear_start_m = 10))
 #' @export
-sig_Stream_elas.Sawicz <- function(Streamflow, Preciptation, t_scale = apply.yearly, wateryear_start_m = 1) {
+sig_Stream_elas.Sawicz <- function(Streamflow, Preciptation, t_scale = apply.yearly, wateryear_start_m = 1, fct_stat = mean) {
   if(wateryear_start_m != 1 && as.character(substitute(t_scale)) != "apply.yearly") message("Water year is only for yearly availability.")
   dim_Q <- dim(Streamflow)
   dim_P <- dim(Preciptation)
   if(dim_Q[1] != dim_P[1] | dim_Q[2] != dim_P[2]) errorCondition("Please make sure Streamflow and Preciptation have the same dimsion.")
   if(any(is.na(Streamflow)) | any(is.na(Preciptation))) message("The NA in Streamflow and Preciptation will be droped, if nessary please deal with the NAs.")
   if(wateryear_start_m > 1) {
-    Streamflow <- water_year(Streamflow, wateryear_start_m)
-    Preciptation <- water_year(Preciptation, wateryear_start_m)
-    }
+    Streamflow <- ts_water_year(Streamflow, wateryear_start_m)
+    Preciptation <- ts_water_year(Preciptation, wateryear_start_m)
+  }
   Q_mean_t_scale <- t_scale(Streamflow, colMeans, na.rm = TRUE)
   P_mean_t_scale <- t_scale(Preciptation, colMeans, na.rm = TRUE)
   dim_scale <- dim(Q_mean_t_scale)
   if(dim_scale[1] < 2) errorCondition("The average Streamflow and Preciptation in the number of time intervall must bigger than 2.")
   dQ <- diff(Q_mean_t_scale)
   dP <- diff(P_mean_t_scale)
-  elas_ <- dQ / dP * rep(colMeans(P_mean_t_scale), each = dim_scale[1]) / rep(colMeans(Q_mean_t_scale), dim_scale[1])
-  return(elas_[-1, ])
+  elas_ <- (dQ / dP * rep(colMeans(P_mean_t_scale), each = dim_scale[1]) / rep(colMeans(Q_mean_t_scale), dim_scale[1]))[-1,]
+  return(apply(elas_, 2, fct_stat, na.rm = T))
 }
 
 
@@ -198,7 +125,7 @@ sig_Stream_elas.Sawicz <- function(Streamflow, Preciptation, t_scale = apply.yea
 #' @examples rslt <- sig_Stream_elas.Sanka(xts_Q, xts_P)
 #' rslt <- median(sig_Stream_elas.Sanka(xts_Q, xts_P, wateryear_start_m = 10))
 #' @export
-sig_Stream_elas.Sanka <- function(Streamflow, Preciptation, t_scale = apply.yearly, wateryear_start_m = 1) {
+sig_Stream_elas.Sanka <- function(Streamflow, Preciptation, t_scale = apply.yearly, wateryear_start_m = 1, fct_stat = mean) {
   if(wateryear_start_m != 1 && as.character(substitute(t_scale)) != "apply.yearly") message("Water year is only for yearly availability.")
   dim_Q <- dim(Streamflow)
   dim_P <- dim(Preciptation)
@@ -208,10 +135,10 @@ sig_Stream_elas.Sanka <- function(Streamflow, Preciptation, t_scale = apply.year
   P_mean_t_scale <- t_scale(Preciptation, colMeans, na.rm = TRUE)
   dim_scale <- dim(Q_mean_t_scale)
   if(dim_scale[1] < 2) errorCondition("The average Streamflow and Preciptation in the number of time intervall must bigger than 2.")
-  Q_mean <- rep(colMeans(Q_mean_t_scale), each = dim_scale[1])
-  P_mean <- rep(colMeans(P_mean_t_scale), each = dim_scale[1])
+  Q_mean <- rep(colMeans(Streamflow, na.rm = TRUE), each = dim_scale[1])
+  P_mean <- rep(colMeans(Preciptation, na.rm = TRUE), each = dim_scale[1])
   elas_ <- (Q_mean_t_scale - Q_mean) / (P_mean_t_scale - P_mean) * P_mean / Q_mean
-  return(elas_[-1,])
+  return(apply(elas_, 2, fct_stat, na.rm = T))
 }
 
 #' @title Frequency or Duration by specified threshold
@@ -224,7 +151,7 @@ sig_Stream_elas.Sanka <- function(Streamflow, Preciptation, t_scale = apply.year
 #' @examples  rslt <- sig_Frequency_threshold(xts_Q)
 #' rslt <- sig_Frequency_threshold(xts_Q, higher = FALSE, threshold = c(0.1, 1), times_mean = FALSE)
 #' @export
-sig_Frequency_threshold <- function(Data, higher = TRUE, threshold = c(1, 3, 9), times_mean = TRUE){
+sig_Frequency_threshold <- function(Data, higher = TRUE, threshold = 1, times_mean = TRUE){
   if(any(is.na(Data))) message("The NA in \'Data\' will be droped, if nessary please deal with the NAs.")
 
   time_N <- dim(Data)[1]
@@ -261,13 +188,15 @@ sig_Frequency_threshold <- function(Data, higher = TRUE, threshold = c(1, 3, 9),
 }
 
 #' @describeIn sig_Frequency_threshold Frequency or Duration by specified threshold
+#' @importFrom tidyr replace_na
 #' @param dur_type [function] mean | max | min for the stattistical methods for the qualifiede Durations.
 #' @examples  rslt <- sig_Duration_threshold(xts_Q)
-#' rslt <- sig_Duration_threshold(xts_Q, higher = FALSE, threshold = c(0.1, 1), times_mean = FALSE, dur_type = max)
+#' rslt <- sig_Duration_threshold(xts_Q, higher = FALSE, threshold = c(0.1, 1),
+#' times_mean = FALSE, dur_type = max)
 #' @export
-sig_Duration_threshold <- function(Data, higher = TRUE, threshold = c(1, 3, 9), times_mean = TRUE, dur_type = mean){
+sig_Duration_threshold <- function(Data, higher = TRUE, threshold = 1, times_mean = TRUE, dur_type = mean){
   ## deal with NAs
-  if(any(is.na(Data))) interpolat_NA_time(Data)
+  Data[,] <- tidyr::replace_na(as.numeric(Data[,]), ifelse(higher, min(Data), max(Data)))
   time_N <- dim(Data)[1]
   space_N <- dim(Data)[2]
   if(times_mean) {
@@ -345,12 +274,14 @@ sig_Autocor <- function(Data, time_lag = 1){
 #' @param decrease_toleranz [num] Toleranz for the small decrease.
 #' @param min_rising_duration [integer] The smallest duration for a decrease.
 #' @importFrom stats cor
+#' @importFrom tidyr replace_na
 #' @return sig_Rising_limb_density [num] [1/step]
 #' @examples rslt <- sig_Rising_limb_density(xts_Q)
 #' @export
 sig_Rising_limb_density <- function(Data, decrease_toleranz = 0, min_rising_duration = 1){
   ## deal with NAs
-  if(any(is.na(Data))) interpolat_NA_time(Data)
+  if(any(is.na(Data))) message("The NA in Data will be replace with 0, if nessary please deal with the NAs.")
+  Data[,] <- tidyr::replace_na(as.numeric(Data[,]), 0)
   dim_Data <- dim(Data)
   judge_rising <- (diff(Data)[-1,] >= -decrease_toleranz)
   return(apply(judge_rising, 2, function(jr) {
@@ -363,21 +294,46 @@ sig_Rising_limb_density <- function(Data, decrease_toleranz = 0, min_rising_dura
 }
 
 
-#' @title Maxi / Mini value of roll windows
-#' @param Data [xts / array]-2D(time, space) Time serious Data in difficult location.
-#' @param roll_size [integer] Roll windows wedith.
-#' @param max [logi] TRUE | FALSE for max or min.
-#' @importFrom zoo rollmean
-#' @return sig_Roll_mean [num] [1/step]
-#' @examples rslt <- sig_Roll_mean(xts_Q)
-#' @export
-sig_Roll_mean <- function(Data, roll_size = 7, max = TRUE){
-  ## deal with NAs
-  if(any(is.na(Data))) interpolat_NA_time(Data)
 
-  Roll_mean <- rollmean(Data, roll_size)
-  ifelse(max, return(apply(Roll_mean, 2, max) * roll_size), return(apply(Roll_mean, 2, min) * roll_size))
+#' @title Slope of the flow duration curve
+#' @description Slope of the flow duration curve of the data mostly streamflow.
+#' For the other scale can use apply.yearly(Data, sig_Quantile, tile = c(5, 95)) or apply.weekly apply.monthly apply.quarterly apply.yearly.
+#' @references [Sawicz.2011]
+#' @param Data [xts / array]-2D(time, space) Time serious Data in difficult location.
+#' @param tile_low [num]-range(0, 100) The lower tile, but the data is the bigger, because the FDC is in decreasing.
+#' @param tile_high [num]-range(0, 100) The higher tile, but the data is the smaller, because the FDC is in decreasing.
+#' @param log_fit |T| for mit ln(Q), |F| for ohne ln(Q)
+#' @return [array]-2D(1, space) The data in the tiles. Or [xts]-2D(sum_time, space) for other scale with apply.XXXly.
+#' @examples rslt <- sig_Slope_fdc(xts_Q)
+#' rslt <- sig_Slope_fdc(xts_Q, 5, 50, FALSE)
+#' rslt <- xts::apply.yearly(xts_Q, sig_Slope_fdc)
+#' @export
+sig_Slope_fdc <- function(Data, tile_low = 33, tile_high = 66, log_fit = T){
+  if(any(is.na(Data))) message("The NA in \'Data\' will be droped, if nessary please deal with the NAs.")
+
+  Quantile_33_66 <- sig_Quantile(Data, c(tile_low, tile_high))
+  if(log_fit) return((log(Quantile_33_66[1,]) - log(Quantile_33_66[2,])) / (tile_low/100 - tile_high/100))
+  else return((Quantile_33_66[1,] - Quantile_33_66[2,]) / (tile_low/100 - tile_high/100))
 }
 
+#' @title Slope of distribution of peaks
+#' @param Data [xts / array]-2D(time, space) Time serious Data in difficult location.
+#' @param decrease_toleranz [num] Toleranz for the small decrease.
+#' @param tile_low,tile_high [num]-range(0-100) The title range for slope of the curve.
+#' @return sig_Peaks_distribution [num] [1/step]
+#' @examples rslt <- sig_Peaks_distribution(xts_Q)
+#' @export
+sig_Peaks_distribution <- function(Data, decrease_toleranz = 0, tile_low = 10, tile_high = 50){
+  ## deal with NAs
+  if(any(is.na(Data))) message("The NA in \'Data\' will be droped, if nessary please deal with the NAs.")
+  Data <- replace(Data, is.na(Data), 0)
 
+  dim_Data <- dim(Data)
+  diff_Data <- diff(Data)
+  peak_location <- rbind(as.matrix(diff(sign(diff_Data))==-2), NA)
+  peak_location[!peak_location] <- NA
+  Q_peaks <- rbind(NA, as.matrix(Data)) * peak_location
+  message("The next message about NAs please irgnore.")
+  return(sig_Slope_fdc(Q_peaks, tile_low, tile_high ))
+}
 
